@@ -1,0 +1,88 @@
+﻿
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>ASP.NET Web API</title>
+    <meta http-equiv="X-UA-Compatible" content="IE=10" />
+    <script src="http://code.jquery.com/jquery-1.11.3.min.js" type="text/javascript"></script>
+
+    <script type="text/javascript">
+
+        function connect() {
+            // Send an AJAX request
+            $.ajax({
+                type: "GET",
+                url :"ep/" + $('#controller').val() + "/Connect",
+                processData: false,
+                contentType: 'application/json',
+                data: $('#rslt').val(),
+                success: function (data) {
+                    $('#msg').val(data.MessageClassName);
+                    $('#rslt').val(JSON.stringify(data, null, 2));
+                }
+            })
+            .fail(function (jqXHR, textStatus, errorThrown) {
+                alert(jqXHR.responseText);
+            });
+        }
+
+        function disconnect() {
+            $.ajax({
+                type: "POST",
+                url: "ep/" + $('#controller').val() + "/Disconnect",
+                processData: false,
+                contentType: 'application/json',
+                success: function (data) {
+                    $('#msg').val('');
+                    $('#rslt').val('');
+                }
+            })
+            .fail(function (jqXHR, textStatus, errorThrown) {
+                alert(jqXHR.responseText);
+            });
+        }
+
+        function ajaxPost() {
+            var msg = $('#msg').val();
+
+            $.ajax({
+                type: "POST",
+                url: "ep/" + $('#controller').val() + "/" + msg,
+                processData: false,
+                contentType: 'application/json',
+                data: $('#rslt').val(),
+                success: function (data) {
+                    $('#msg').val(data.MessageClassName);
+                    $('#rslt').val(JSON.stringify(data, null, 2));
+                }
+            })
+            .fail(function (jqXHR, textStatus, errorThrown) {
+                alert(jqXHR.responseText);
+            });
+        }
+
+    </script>
+
+</head>
+<body id="body">
+    <h1>Unisys DataSource Web API Test Page</h1>
+    <div>
+        <div>
+            <p>
+                Enter the name of the Web API controller to test, and click "Connect". The returned Message name is displayed along with the JSON result.
+                The JSON string can be modified to fill in field values. Click "Post" to send the message to the server.
+            </p>
+            <h2><label for="controller">Controller name:</label></h2>
+            <input id="controller" /> <button onclick="connect();return true;">Connect</button> <button onclick="disconnect();return true;">Disconnect</button>
+        </div>
+        <br />
+        <div>
+            <h2><label for="msg">Message name:</label></h2>
+            <input id="msg" /> <input type="button" value="Post" onclick="ajaxPost();" />
+        </div>
+        <div>
+            <textarea id="rslt" title="Results go here" rows="20" style="width:100%; max-width:100%"></textarea>
+        </div>
+    </div>
+</body>
+</html>

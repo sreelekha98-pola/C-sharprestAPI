@@ -1,0 +1,339 @@
+<# 
+   /******************************************************************************* 
+    Copyright © Unisys Corporation.                                                 
+    All rights reserved.                                                            
+   *******************************************************************************/
+#>
+<#@ Template Language="C#" HostSpecific="True" #>
+<#@ Output Extension="cs" #>
+<#@ assembly name="EnvDTE" #>
+<#@ import namespace="EnvDTE" #>
+<#@ assembly name="System.Web" #>
+<#@ import namespace="System.Web" #>
+using System;
+using System.Collections.Generic;
+using System.Collections.Specialized;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Web;
+using System.Web.Http;
+using System.Web.Http.WebHost;
+using System.Xml;
+using System.Web.Http.Filters;
+using System.Web.Http.Controllers;
+
+<#@ CleanupBehavior processor="T4VSHost" CleanupAfterProcessingtemplate="true" #>
+
+<#@ parameter type="System.String" name="ModelAssembly" #>
+<#@ parameter type="System.String" name="ModelName" #>
+<#@ parameter type="System.String" name="ModelNamespace" #>
+<#@ parameter type="System.String" name="ModelClassName" #>
+<#@ parameter type="System.String" name="ModelType" #>
+<#@ parameter type="System.Boolean" name="ModelSessionRequired" #>
+<#@ parameter type="System.Boolean" name="ModelUseSSL" #>
+
+<#
+    // load the assembly for processing
+    System.Reflection.Assembly assm = System.Reflection.Assembly.LoadFrom(ModelAssembly);
+    String modelDir = System.IO.Path.GetDirectoryName(ModelAssembly);
+	System.Reflection.Assembly mvcAssembly
+        = System.Reflection.Assembly.LoadFrom(System.IO.Path.Combine(modelDir, "System.Web.Mvc.dll"));
+	Type additionalMetadataAttributeType = null;
+	System.Reflection.PropertyInfo additionalMetadataAttributeNameProperty = null;
+	System.Reflection.PropertyInfo additionalMetadataAttributeValueProperty = null;
+	if (mvcAssembly != null) {
+		additionalMetadataAttributeType = mvcAssembly.GetType("System.Web.Mvc.AdditionalMetadataAttribute");
+		if (additionalMetadataAttributeType != null) {
+			additionalMetadataAttributeNameProperty = additionalMetadataAttributeType.GetProperty("Name");
+			additionalMetadataAttributeValueProperty = additionalMetadataAttributeType.GetProperty("Value");
+		}
+	}
+
+    Type[] types = assm.GetExportedTypes();
+    string startMessage = string.Empty;
+
+    // find start message
+    foreach (Type type in types) {
+        if (type.Name.Equals(ModelName) && additionalMetadataAttributeType != null) {
+            var baseAtts = type.GetCustomAttributes(additionalMetadataAttributeType, true);
+            foreach (Object att in baseAtts) {
+				String attName = additionalMetadataAttributeNameProperty.GetValue(att, null).ToString();
+                if (attName.Equals("StartMessage", StringComparison.InvariantCultureIgnoreCase)) {
+                    startMessage = additionalMetadataAttributeValueProperty.GetValue(att, null).ToString();
+                }
+			}		
+        }
+    }
+
+#>
+using <#= ModelName #>;
+
+namespace <#= ModelNamespace #>.Controllers
+{ 
+    public partial class <#= ModelClassName #>Controller : <#= ModelClassName #>ControllerBase { }
+
+<#
+        if (ModelUseSSL) {
+#>
+    [RequireHttps]
+<#
+        }
+#>
+    public class <#= ModelClassName #>ControllerBase : ApiController
+    {
+<# if (ModelSessionRequired) { #>
+
+        /// <summary>
+        /// Connect to the web service.
+        /// </summary>
+        [HttpGet]
+<#
+        if (string.IsNullOrEmpty(startMessage)) {
+#>
+        public virtual Unisys.Message Connect()
+        {
+            Unisys.Message startMessage = null;
+<#		} else {
+#>
+        public virtual Unisys.Message Connect(<#= ModelName #>.<#=startMessage#> startMessage)
+        {
+<#
+        }
+#>
+            Unisys.Message msg = null;
+            var Session = HttpContext.Current.Session;
+
+            if (Session["<#= ModelName #>"] == null)
+            {
+                InitializeSession();
+
+                Unisys.DataSource dataSource = (Unisys.DataSource)Session["<#= ModelName #>"];
+
+                msg = dataSource.Connect(startMessage);
+                Session["<#= ModelName #>-msg"] = msg;
+            }
+            else
+            {
+                msg = (Unisys.Message)Session["<#= ModelName #>-msg"];
+            }
+
+            return msg;
+        }
+
+        
+        /// <summary>
+        /// Disconnect from the web service.
+        /// </summary>
+        [HttpPost]
+        public virtual Unisys.Message Disconnect()
+        {
+            var Session = HttpContext.Current.Session;
+            if (!Session.IsNewSession)
+            {
+                Unisys.Component comp = (Unisys.Component)Session["<#= ModelName #>"];
+                if (comp != null)
+                    comp.Disconnect();
+            }
+
+            Session.Abandon();
+
+            Unisys.Error error =  new Unisys.Error();
+            error.SessionAborted = true;
+            error.WebErrorMessage = "The application is closed.";
+
+            return error;
+        }
+<# } #> 
+        protected virtual Unisys.Message SendReceive(Unisys.Message model)
+        {
+            var Session = HttpContext.Current.Session;
+<# if (!ModelSessionRequired) { #>
+            SessionlessInit();
+<# } #>
+            Unisys.DataSource dataSource = (Unisys.DataSource)Session["<#= ModelName #>"];
+<# if (ModelSessionRequired) { #>
+
+            if (dataSource == null)
+<#
+        if (string.IsNullOrEmpty(startMessage)) {
+#>
+                return Connect();
+<#
+        } else {
+#>
+                return Connect(null);
+<#
+        }
+#>
+<# } #>
+
+            if (!ModelState.IsValid)
+            {
+                System.Web.Http.ModelBinding.ModelErrorCollection errors = ModelState[ModelState.First().Key].Errors;
+                Exception exception = errors[0].Exception;
+
+                string errorMessage = errors[0].ErrorMessage;
+                if (string.IsNullOrWhiteSpace(errorMessage))
+                    errorMessage = exception.Message;
+                string webMessage = errorMessage;
+                int errorCode = 0;
+                string subCode = "0";
+
+                while (exception != null)
+                {
+                    if (exception is Unisys.Common.Runtime.ProcessOrch.OrchException) 
+                    {
+                        errorMessage = ((Unisys.Common.Runtime.ProcessOrch.OrchException)exception).Message;
+                        errorCode = ((Unisys.Common.Runtime.ProcessOrch.OrchException)exception).ExceptionCode;
+                        subCode = ((Unisys.Common.Runtime.ProcessOrch.OrchException)exception).ExceptionSubCode;
+                        webMessage = ((Unisys.Common.Runtime.ProcessOrch.OrchException)exception).WebMessage;
+                        break;
+                    }
+                    else 
+                        exception = exception.InnerException;
+                }
+
+                Unisys.Error error =  new Unisys.Error(errorMessage, errorCode, subCode);
+                error.WebErrorMessage = webMessage;
+                error.SessionAborted = false;
+                return error;
+            }
+
+            Unisys.Message msg = null;
+            try
+            {
+                msg = dataSource.SendMessage(model);
+                Session["<#= ModelName #>-msg"] = msg;
+
+                if (msg.MessageClassName.Equals("RuntimeError"))
+                {
+                    Session.Abandon();
+                }
+            }
+
+            catch (Unisys.Common.Runtime.ProcessOrch.OutOfOrderException)
+            {
+                return (Unisys.Message)Session["<#= ModelName #>-msg"];
+            }
+
+<# if (!ModelSessionRequired) { #>
+            finally
+            {
+                dataSource.Disconnect();
+                Session.Abandon();
+            }
+<# } #>
+            return msg;
+        }
+
+        protected virtual void InitializeSession()
+        {
+            var Session = HttpContext.Current.Session;
+            ListDictionary sessionInfo = new ListDictionary();
+
+            sessionInfo["sessionID"] = Session.SessionID;
+
+            string remoteIP = ((System.Web.HttpContextWrapper)Request.Properties["MS_HttpContext"]).Request.UserHostAddress;
+            var xForwardedFor = ((System.Web.HttpContextWrapper)Request.Properties["MS_HttpContext"]).Request.ServerVariables["X_FORWARDED_FOR"];
+
+            if (!string.IsNullOrEmpty(xForwardedFor))
+            {
+                // Get a list of ip addresses in the X_FORWARDED_FOR variable
+                String[] forwardingIps = xForwardedFor.Split(',');
+                remoteIP = forwardingIps.Last();
+            }
+
+            if (!remoteIP.Contains("%") && !remoteIP.Equals("127.0.0.1") && !remoteIP.Equals("0:0:0:0:0:0:0:1") && !remoteIP.Equals("::1"))
+            {
+                String addr = remoteIP.Replace('.', '_');
+                addr = addr.Replace(':', '-');
+                sessionInfo["ClientAddress"] = addr;
+            }
+
+            Unisys.DataSource dataSource = new <#= ModelType #> (HttpRuntime.AppDomainAppPath, sessionInfo);
+            Session["<#= ModelName #>"] = dataSource;
+        }
+
+<# if (!ModelSessionRequired) { #>
+        protected virtual void SessionlessInit()
+        {
+            var Session = HttpContext.Current.Session;
+
+            if (Session["<#= ModelName #>"] == null)
+                InitializeSession();
+
+           Unisys.DataSource dataSource = (Unisys.DataSource)Session["<#= ModelName #>"];
+           dataSource.SessionlessInit();
+        }
+
+        [HttpPost]
+        public virtual Unisys.Message RuntimeError(Unisys.Error model)
+        {
+            return SendReceive(model);
+        }
+<# } #>
+
+<#
+    foreach (Type type in types) {
+        if (!type.BaseType.ToString().Equals("Unisys.Message"))
+            continue;
+
+        String tName = type.FullName;
+        if ( (tName.Contains(".Client+") || tName.Contains(".Client.")) && 
+             (!(tName.Contains("_Keyed")))
+           )
+        {
+            String typeFullName = tName.Replace('+', '.');
+            String typeShortName = type.Name;
+			String typeDescription = "";
+			var atts = type.GetCustomAttributes(typeof(System.ComponentModel.DescriptionAttribute), false);
+			if (atts.Length > 0) {
+				try {
+					typeDescription = ((System.ComponentModel.DescriptionAttribute)atts[0]).Description;
+				} catch { }
+			}
+			if (String.IsNullOrWhiteSpace(typeDescription))
+			{
+				typeDescription = "";
+			}
+			else
+			{
+				typeDescription = "  Client message " + typeShortName + " description: " + System.Web.HttpUtility.HtmlAttributeEncode(typeDescription);
+			}
+#>
+        /// <summary>
+        /// Send the client message <#=typeShortName#>, to the application.<#=typeDescription#>
+        /// </summary>
+        /// <param name="message">The client message, <#=typeShortName#>, containing the data to send to the application.</param>
+        [HttpPost]
+        public virtual Unisys.Message <#=typeShortName#> ( <#=typeFullName#> model)
+        {
+            return SendReceive(model);
+        }
+
+<#		
+        }
+    }
+#>
+
+        public class RequireHttpsAttribute : AuthorizationFilterAttribute
+        {
+            public override void OnAuthorization(HttpActionContext actionContext)
+            {
+                if (actionContext.Request.RequestUri.Scheme != Uri.UriSchemeHttps)
+                {
+                    actionContext.Response = new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden)
+                    {
+                        ReasonPhrase = "HTTPS Required"
+                    };
+                }
+                else
+                {
+                    base.OnAuthorization(actionContext);
+                }
+            }
+        }
+    }
+}
