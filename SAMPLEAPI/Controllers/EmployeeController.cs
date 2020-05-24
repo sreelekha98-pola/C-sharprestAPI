@@ -14,6 +14,7 @@ namespace SAMPLEAPI.Controllers
 
 
     public class EmployeeController : ApiController
+    
     {
         empdbDataContext db = new empdbDataContext();
 
